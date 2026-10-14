@@ -1,0 +1,54 @@
+# Sensitive Keys and Certificates
+bob
+bob.pub
+*.pub
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Environment and Secrets
+.env
+.env.*
+!.env.example
+
+# Databases & Vector Indexes
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+faiss_index.bin
+faiss_metadata.pkl
+test_p6b_faiss.bin
+test_p6b_faiss.pkl
+
+# User Uploads and Generated Exports
+uploads/
+**/uploads/
+exports/
+**/exports/
+
+# Python Virtual Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+venv/
+.venv/
+env/
+ENV/
+*.bak
+
+# Node & Frontend Build
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Operating System Files
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -2,8 +2,11 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
 .env
+.env.*
+!.env.example
 .venv
 venv/
 ENV/
@@ -12,7 +15,20 @@ env.bak/
 venv.bak/
 
 /uploads
+/exports
 
 faiss_index.bin
 faiss_metadata.pkl
-test.db
+test_p6b_faiss.bin
+test_p6b_faiss.pkl
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Keys and credentials
+*.pub
+*.pem
+*.key
+bob
+bob.pub

@@ -5,16 +5,16 @@ from app.repositories.snapshot_repository import SnapshotRepository
 from app.repositories.metrics_repository import MetricsRepository
 from app.repositories.chunk_repository import ChunkRepository
 from app.core.exceptions import QuotaExceededException
-from app.services.ai_service import AIService
+from app.services.llm_router import get_llm_router, LLMRouter
 
 class ChecklistService:
-    def __init__(self, db):
+    def __init__(self, db, router: LLMRouter | None = None):
         self.db = db
         self.document_repo = DocumentRepository(db)
         self.snapshot_repo = SnapshotRepository(db)
         self.metrics_repo = MetricsRepository(db)
         self.chunk_repo = ChunkRepository(db)
-        self.ai_service = AIService()
+        self.router = router if router is not None else get_llm_router()
 
     def _log_metric(self, action: str, user_id: str):
         self.metrics_repo.increment(action, user_id=user_id)
@@ -51,7 +51,7 @@ class ChecklistService:
         """
 
         try:
-            result = await self.ai_service.generate_json(prompt, user_id=user_id)
+            result = await self.router.generate_json(prompt, task="compliance", user_id=user_id)
         except QuotaExceededException:
             print("Checklist: Falling back to heuristic rules.")
             # OFFLINE FALLBACK: Heuristic Checks
