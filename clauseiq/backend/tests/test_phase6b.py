@@ -146,8 +146,8 @@ def _build_patches():
         patch("app.services.ai_service.genai.Client", return_value=MagicMock()),
         # Patch the AIService class-level singleton so every AIService() call
         # returns our mock instance
-        patch("app.services.summary_service.AIService",   return_value=mock_ai_instance),
-        patch("app.services.risk_service.AIService",      return_value=mock_ai_instance),
+        patch("app.services.llm_providers.gemini_provider.AIService", return_value=mock_ai_instance),
+        patch("app.services.ai_service.AIService",        return_value=mock_ai_instance),
         patch("app.services.checklist_service.AIService", return_value=mock_ai_instance),
         patch("app.services.chat_service.AIService",      return_value=mock_ai_instance),
         patch("app.services.clause_extraction_service.AIService", return_value=mock_ai_instance),
@@ -176,10 +176,15 @@ class TestPhase6B(unittest.TestCase):
         except Exception:
             pass
 
-        # Reset AIService singleton
+        # Reset AIService and LLMRouter singletons
         try:
             import app.services.ai_service as _ai_mod
             _ai_mod.AIService._instance = None
+        except Exception:
+            pass
+        try:
+            import app.services.llm_router as _router_mod
+            _router_mod._router_instance = None
         except Exception:
             pass
 
@@ -189,6 +194,15 @@ class TestPhase6B(unittest.TestCase):
             p.start()
 
         # Now build the test client — all external deps already patched
+        import app.db.session as _session_mod
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        _session_mod.engine.dispose()
+        _session_mod.engine = create_engine(f"sqlite:///{TEST_DB}", connect_args={"check_same_thread": False})
+        _session_mod.SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_session_mod.engine)
+        from app.models.document import Base
+        Base.metadata.create_all(bind=_session_mod.engine)
+
         from fastapi.testclient import TestClient
         from app.main import app
         cls.client = TestClient(app)
@@ -263,6 +277,16 @@ class TestPhase6B(unittest.TestCase):
                 p.stop()
             except Exception:
                 pass
+        try:
+            import app.db.session as _session_mod
+            _session_mod.engine.dispose()
+        except Exception:
+            pass
+        try:
+            import app.services.llm_router as _router_mod
+            _router_mod._router_instance = None
+        except Exception:
+            pass
         _cleanup(TEST_DB, TEST_FAISS_INDEX, TEST_FAISS_META)
 
 
