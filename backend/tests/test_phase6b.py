@@ -148,7 +148,6 @@ def _build_patches():
         # returns our mock instance
         patch("app.services.llm_providers.gemini_provider.AIService", return_value=mock_ai_instance),
         patch("app.services.ai_service.AIService",        return_value=mock_ai_instance),
-        patch("app.services.clause_extraction_service.AIService", return_value=mock_ai_instance),
     ]
 
 

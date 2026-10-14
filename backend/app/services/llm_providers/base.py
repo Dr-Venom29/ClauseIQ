@@ -13,3 +13,25 @@ class LLMProvider(Protocol):
     ) -> Any:
         """Generate text or raise a classified provider exception."""
         ...
+
+    def generate_text(
+        self,
+        prompt: str,
+        *,
+        task: str,
+        user_id: str | None = None,
+        **options: Any,
+    ) -> Any:
+        """Generate plain text or raise a classified provider exception."""
+        ...
+
+    def generate_json(
+        self,
+        prompt: str,
+        *,
+        task: str,
+        user_id: str | None = None,
+        **options: Any,
+    ) -> Any:
+        """Generate structured JSON or raise a classified provider exception."""
+        ...

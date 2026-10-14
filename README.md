@@ -1,129 +1,230 @@
 # ClauseIQ: Contract Analysis Platform
 
-ClauseIQ is a document analysis and contract intelligence platform. It uses Retrieval-Augmented Generation (RAG), vector search, and heuristic fallbacks to parse legal documents, extract clauses, generate compliance checklists, identify risks, and compare contract versions.
+ClauseIQ is a high-assurance document analysis and contract intelligence platform. It combines Retrieval-Augmented Generation (RAG), vector similarity search, string metric diffing, and deterministic heuristic fallbacks to parse legal agreements, extract structured clauses, evaluate compliance checklists, quantify risks, and analyze contract version diffs.
 
 ---
 
 ## Core Capabilities
 
-*   **Document Ingestion:** Parses PDFs into page-level chunks and indexes text embeddings using FAISS and Google Generative AI embeddings (`models/gemini-embedding-2`).
-*   **LLM Task Routing:** Routes all generation requests through a decoupled router (`LLMRouter`) with explicit task definitions (`summary`, `risk_analysis`, `compliance`, `rag_chat`, `version_impact`, `clause_extraction`).
-*   **Structured Analysis:**
-    *   **Summaries:** Generates structured executive summaries and obligations.
-    *   **Compliance Checklists:** Evaluates documents against standard business requirements (e.g., Termination, Confidentiality, Indemnification, Governing Law, Force Majeure).
-    *   **Risk Analysis:** Categorizes High, Medium, and Low risks with citations back to the source text.
-*   **Clause Extraction:** Identifies and segments contract clauses mapped to source page numbers.
-*   **Contract Version Comparison:** Compares two contract versions using a `rapidfuzz` string similarity engine. Unchanged clauses (>=98% match) and structural changes are separated locally; modified clauses (80-97% match) are sent to the LLM to assess compliance and risk impact.
-*   **Context-Aware RAG Chat:**
-    *   *Candidate Retrieval:* Queries FAISS for candidates using vector similarity.
-    *   *Metadata Scoping:* Restricts retrieved chunks strictly to the active `document_id` and authorized `user_id`.
-    *   *Hybrid Reranking:* Reranks candidates using semantic similarity (0.7 weight) and Jaccard token overlap (0.3 weight).
-    *   *Citation Synthesis:* Returns grounded answers with source page and section citations.
-*   **Offline Resilience & Caching:**
-    *   *Snapshot Caching:* Analysis results are stored in SQLite (`AnalysisSnapshot`). Repeated queries return cached snapshots without model invocation.
-    *   *Heuristic Fallbacks:* When API quota limits (HTTP 429/503) or rate limits occur, the system falls back to deterministic regex extraction and keyword heuristics.
-*   **Workspace & Audit Logging:** Tracks document lineage, user actions (`upload`, `summary`, `risk_analysis`, `checklist`, `chat`, `comparison`), and cache metrics.
-*   **Multi-Format Export:** Generates downloadable reports in PDF, DOCX, and JSON formats.
+*   **Document Ingestion & Chunking:** Parses PDF contracts into page-indexed text chunks, generating dense vector embeddings via Google Generative AI embeddings (`models/gemini-embedding-2`) and indexing them in a localized FAISS store.
+*   **Decoupled LLM Task Router:** Dispatches all text and structured generation requests through an abstracted routing layer (`LLMRouter`) across 6 registered tasks (`summary`, `risk_analysis`, `compliance`, `rag_chat`, `version_impact`, `clause_extraction`).
+*   **Structured Analysis Pipelines:**
+    *   **Executive Summaries:** Produces structured contract metadata, key obligations, governing law, and parties.
+    *   **Compliance Verification:** Evaluates contracts against standard corporate provisions (Termination, Confidentiality, Indemnification, Governing Law, Force Majeure).
+    *   **Risk Assessment:** Categorizes liabilities into High, Medium, and Low risk tiers with grounded source text citations.
+*   **Automated Clause Extraction:** Segments raw document text into distinct, addressable clauses mapped to original page and section boundaries.
+*   **Cost-Optimized Version Comparison:** Compares contract revisions using RapidFuzz string metric distance:
+    *   *Unchanged Clauses (>=98% match):* Resolved deterministically at zero model cost.
+    *   *Modified Clauses (80-97% match):* Routed to LLM with `task="version_impact"` to assess compliance and risk exposure.
+    *   *Added / Removed Clauses:* Categorized via local structural diffing.
+*   **Context-Scoped RAG Chat:**
+    *   *Vector Retrieval:* Nearest-neighbor query in FAISS.
+    *   *Tenant Scoping:* Hard-filters candidates by `document_id` and authenticated `user_id`.
+    *   *Hybrid Reranking:* Reranks candidates using combined semantic vector similarity (0.7 weight) and Jaccard token overlap (0.3 weight).
+    *   *Citation Synthesis:* Returns grounded answers with explicit page and section citations.
+*   **Dual-Layer Resilience & Snapshot Caching:**
+    *   *Snapshot Cache:* Persists LLM responses in SQLite keyed by `(document_id, analysis_type, content_hash, user_id)`. Subsequent requests return instantly without model invocation.
+    *   *Deterministic Fallbacks:* On HTTP 429/503 or quota exhaustion (`QuotaExceededException`), services fall back to local rule-based heuristics and regex parsers.
+*   **Multi-Format Export:** Generates downloadable audit reports in PDF (`reportlab`), DOCX (`python-docx`), and structured JSON.
 
 ---
 
-## Architecture & LLM Routing
-
-ClauseIQ decouples business services from model providers using a provider adapter pattern:
+## System Architecture
 
 ```mermaid
 flowchart TD
-    Client["React Frontend"] --> API["FastAPI Endpoints"]
-    API --> Services["Business Services"]
+    Client["React Frontend (Vite)"] -->|JWT Bearer Auth| API["FastAPI Application Gateway"]
 
-    subgraph Business_Services["Business Services"]
-        SummaryService["SummaryService"]
-        RiskService["RiskService"]
-        ChecklistService["ChecklistService"]
-        ChatService["ChatService"]
-        ComparisonService["ComparisonService"]
-        ClauseService["ClauseExtractionService"]
+    subgraph Consumer_Services["Domain Consumer Services"]
+        SummarySvc["SummaryService"]
+        RiskSvc["RiskService"]
+        ChecklistSvc["ChecklistService"]
+        ChatSvc["ChatService"]
+        ComparisonSvc["ComparisonService"]
+        ClauseSvc["ClauseExtractionService"]
     end
 
-    Services --> SummaryService
-    Services --> RiskService
-    Services --> ChecklistService
-    Services --> ChatService
-    Services --> ComparisonService
-    Services --> ClauseService
+    API --> Consumer_Services
 
-    subgraph LLM_Routing["LLM Routing Layer"]
-        Router["LLMRouter"]
+    subgraph LLM_Routing_Layer["Decoupled LLM Routing Layer"]
+        Router["LLMRouter (Singleton)"]
         GeminiAdapter["GeminiProvider"]
+        CustomAdapter["Custom / Local Provider (Optional)"]
         Router --> GeminiAdapter
+        Router -.-> CustomAdapter
     end
 
-    SummaryService -->|task: summary| Router
-    RiskService -->|task: risk_analysis| Router
-    ChecklistService -->|task: compliance| Router
-    ChatService -->|task: rag_chat| Router
-    ComparisonService -->|task: version_impact| Router
-    ClauseService -->|task: clause_extraction| Router
+    SummarySvc -->|task: summary| Router
+    RiskSvc -->|task: risk_analysis| Router
+    ChecklistSvc -->|task: compliance| Router
+    ChatSvc -->|task: rag_chat| Router
+    ComparisonSvc -->|task: version_impact| Router
+    ClauseSvc -->|task: clause_extraction| Router
 
-    subgraph Providers["Model Gateway"]
-        GeminiAdapter --> AIService["AIService"]
+    subgraph Model_Gateway["Model Gateway"]
+        GeminiAdapter --> AIService["AIService Gateway"]
         AIService --> GeminiAPI["Google Gemini 2.5 Flash"]
     end
 
-    subgraph Storage_Layer["Storage and Cache"]
-        Services --> Snapshots["SQLite AnalysisSnapshot Cache"]
-        Services --> FAISS["FAISS Vector Store"]
-        Services -.->|QuotaExceededException| Fallbacks["Offline Heuristics and Regex"]
+    subgraph Storage_And_Retrieval["Storage, Cache & Retrieval Layer"]
+        Consumer_Services --> Snapshots[("SQLite AnalysisSnapshot Cache")]
+        Consumer_Services --> DB[("SQLite Database (Tenancy Enforced)")]
+        ChatSvc --> FAISS[("FAISS In-Memory Vector Store")]
+        Consumer_Services -.->|QuotaExceededException| Fallbacks["Deterministic Local Heuristics"]
     end
 ```
 
-### Task Mapping
+---
 
-| Task Identifier | Default Provider | Output Format | Offline Fallback |
+## LLM Router & Task Contracts
+
+All generation passes through [`LLMRouter`](backend/app/services/llm_router.py). Consumer services do not import or reference model clients directly.
+
+### Task Routing Table
+
+| Task Identifier | Output Contract | Default Provider | Deterministic Quota Fallback |
 | :--- | :--- | :--- | :--- |
-| `summary` | Gemini | JSON (`dict`) | Extractive chunk sampling |
-| `risk_analysis` | Gemini | JSON (`dict`) | Keyword rules (`liability`, `punitive damages`) |
-| `compliance` | Gemini | JSON (`list[dict]`) | 5-point keyword checklist |
-| `rag_chat` | Gemini | Text (`str`) | Quota error notice with citations |
-| `version_impact` | Gemini | JSON (`dict`) | Offline comparison impact summary |
-| `clause_extraction` | Gemini | JSON (`list[dict]`) | Regex header splitting |
+| `summary` | Structured `dict` | `GeminiProvider` | Extractive chunk sampling across document pages |
+| `risk_analysis` | Structured `dict` | `GeminiProvider` | Keyword rules (`liability`, `punitive damages`, `indemnity`) |
+| `compliance` | Structured `list[dict]` | `GeminiProvider` | 5-point keyword compliance checklist |
+| `rag_chat` | Plain text `str` | `GeminiProvider` | Offline notification retaining retrieved citations |
+| `version_impact` | Structured `dict` | `GeminiProvider` | Offline comparison impact summary |
+| `clause_extraction` | Structured `list[dict]` | `GeminiProvider` | Regex section header boundary splitting |
+
+### Architectural Boundary: Representation vs. Generation
+
+ClauseIQ maintains a strict boundary between embedding/retrieval and generation:
+*   **Representation & Vector Search:** Owned by `EmbeddingService` and `FAISSVectorStore` using `GoogleGenerativeAIEmbeddings`. Multi-tenant scoping and flat-index vector pruning operate independently of the generation router.
+*   **Generation:** Owned by `LLMRouter`. Consumer services specify task intent; providers return parsed objects or text.
+
+### Extending with Alternative Providers
+
+To integrate an alternative provider (e.g. self-hosted Ollama, legal foundation model, or private cloud endpoint):
+
+1. Implement the `LLMProvider` protocol (`backend/app/services/llm_providers/base.py`):
+```python
+from typing import Any
+from app.services.llm_providers.base import LLMProvider
+
+class CustomLegalProvider:
+    async def generate_text(
+        self, prompt: str, *, task: str, user_id: str | None = None, **options: Any
+    ) -> str:
+        # Call custom endpoint for unstructured text
+        ...
+
+    async def generate_json(
+        self, prompt: str, *, task: str, user_id: str | None = None, **options: Any
+    ) -> Any:
+        # Call custom endpoint and return parsed dict/list
+        ...
+```
+
+2. Register the provider and configure task routes:
+```python
+from app.services.llm_router import LLMRouter
+from app.services.llm_providers.gemini_provider import GeminiProvider
+
+custom_provider = CustomLegalProvider()
+
+router = LLMRouter(
+    providers={
+        "gemini": GeminiProvider(),
+        "custom_legal": custom_provider,
+    },
+    task_routes={
+        "summary": "gemini",
+        "risk_analysis": "custom_legal",
+        "compliance": "custom_legal",
+        "rag_chat": "gemini",
+        "version_impact": "custom_legal",
+        "clause_extraction": "gemini",
+    },
+)
+```
 
 ---
 
-## Multi-Tenant Security & Data Isolation
+## Multi-Tenant Security & Isolation
 
-*   **Request Authentication:** Endpoints require JWT validation via `Depends(get_current_user)`.
-*   **Database Isolation:** All primary records (`Document`, `Chunk`, `Clause`, `AnalysisSnapshot`, `ActivityLog`, `Metrics`) enforce `user_id` foreign keys. Repository queries filter by caller identity.
-*   **Vector Search Isolation:** In-memory vector searches filter results post-query by both `document_id` and `user_id` to prevent cross-tenant vector leakage.
-*   **Offline Vector Deletion:** When a document is deleted, vectors are pruned directly from the index using flat array reconstruction (`reconstruct`) and index rebuilding without re-embedding.
+*   **JWT Authentication:** All protected endpoints require a validated JWT token injected via FastAPI's `Depends(get_current_user)`.
+*   **Repository-Level Scoping:** All database operations (`DocumentRepository`, `ChunkRepository`, `ClauseRepository`, `SnapshotRepository`, `ActivityRepository`, `MetricsRepository`) enforce mandatory `user_id` predicates. Cross-tenant access attempts raise HTTP 404 or authorization errors.
+*   **Vector Search Tenant Isolation:** In-memory FAISS searches post-filter candidates strictly by `(document_id, user_id)` before reranking, preventing vector leakage across tenants.
+*   **Index Pruning on Document Deletion:** When a document is deleted, vectors are pruned directly from the index using flat array reconstruction (`reconstruct`) and index rebuilding without re-embedding.
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description | Auth Required |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/api/auth/register` | Register new user account | No |
+| `POST` | `/api/auth/login` | Authenticate and obtain JWT access token | No |
+| `GET` | `/api/auth/me` | Fetch active user profile | Yes |
+| `POST` | `/api/documents/upload` | Upload PDF document, extract text chunks, index vectors | Yes |
+| `GET` | `/api/documents` | List uploaded documents for authenticated user | Yes |
+| `GET` | `/api/documents/{id}` | Retrieve document metadata and chunks | Yes |
+| `DELETE` | `/api/documents/{id}` | Delete document, chunks, snapshots, and prune FAISS vectors | Yes |
+| `POST` | `/api/analysis/{id}/summary` | Generate or retrieve cached executive summary | Yes |
+| `POST` | `/api/analysis/{id}/risks` | Generate or retrieve cached risk analysis | Yes |
+| `POST` | `/api/analysis/{id}/checklist` | Generate or retrieve cached compliance checklist | Yes |
+| `POST` | `/api/chat/{id}` | Ask question against document via RAG with citations | Yes |
+| `POST` | `/api/compare` | Compare two document versions using RapidFuzz + LLM | Yes |
+| `GET` | `/api/export/{id}/{format}` | Export report (`pdf`, `docx`, `json`) | Yes |
+| `GET` | `/api/activity` | Retrieve user audit trail and activity log | Yes |
+| `GET` | `/api/metrics` | Retrieve cache hit/miss and execution metrics | Yes |
 
 ---
 
 ## Technology Stack
 
-*   **Backend:** Python 3.12, FastAPI, SQLAlchemy, SQLite, FAISS (`faiss-cpu`), `google-genai`, `rapidfuzz`, `python-docx`, `reportlab`, `pydantic-settings`.
-*   **Frontend:** React 18, Vite, Framer Motion, GSAP, Anime.js, Axios.
-*   **Testing:** Pytest, unittest.mock, HTTPX TestClient.
+*   **Backend Framework:** Python 3.12, FastAPI, Pydantic v2, Uvicorn.
+*   **Persistence & Database:** SQLAlchemy 2.0, SQLite (WAL mode).
+*   **Vector Search & Embeddings:** FAISS (`faiss-cpu`), Google Generative AI Embeddings (`models/gemini-embedding-2`).
+*   **LLM Gateway:** Google Gemini 2.5 Flash, `google-genai`.
+*   **Diffing & Metrics:** RapidFuzz (Levenshtein / partial ratio string metrics).
+*   **Document Processing:** PyPDF, `python-docx`, ReportLab.
+*   **Frontend Interface:** React 18, Vite, Framer Motion, GSAP, Anime.js, Axios, Lucide Icons.
+*   **Testing Infrastructure:** Pytest, AnyIO, unittest.mock, Starlette TestClient.
 
 ---
 
-## Setup & Installation
+## Test Suite Architecture
+
+The backend test suite contains **55 automated tests** validating router mechanics, provider independence, multi-tenant security, and heuristic resilience:
+
+```text
+tests/
+├── test_phase6b.py                   # 6 tests: Multi-tenant isolation, FAISS vector pruning, audit logging
+├── test_llm_router.py                # 13 tests: LLMRouter core, validation, provider swapping, multi-provider routing
+├── test_llm_provider_independence.py # 13 tests: Protocol compliance, 6-task dispatch, QuotaExceeded propagation
+├── test_summary_router.py            # 3 tests: SummaryService routing, snapshot caching, fallback
+├── test_risk_router.py               # 4 tests: RiskService routing, keyword rule fallback, snapshot caching
+├── test_checklist_router.py          # 5 tests: ChecklistService routing, 5-point keyword fallback, caching
+├── test_chat_router.py               # 3 tests: ChatService RAG retrieval, hybrid reranking, citation metadata
+├── test_version_impact_router.py     # 4 tests: RapidFuzz categorization and ChangeAnalysisService routing
+└── test_clause_extraction_router.py  # 4 tests: ClauseExtractionService routing and regex header fallback
+```
+
+---
+
+## Getting Started
 
 ### Prerequisites
-*   Python 3.10+
-*   Node.js 18+
+
+*   Python 3.10+ (tested on Python 3.12)
+*   Node.js 18+ & npm
 *   Google Gemini API Key
 
 ### 1. Repository Setup
+
 ```bash
-git clone https://github.com/yourusername/clauseiq.git
-cd clauseiq
+git clone https://github.com/Dr-Venom29/ClauseIQ.git
+cd ClauseIQ/clauseiq
 ```
 
-### 2. Backend Setup
-Create and activate a virtual environment:
+### 2. Backend Installation
 
-**Windows (PowerShell):**
 ```powershell
 cd backend
 python -m venv venv
@@ -131,98 +232,43 @@ python -m venv venv
 pip install -r requirements.txt
 ```
 
-**Linux / macOS:**
-```bash
-cd backend
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-Create a `.env` file in the `backend/` directory:
+Create a `.env` file in `backend/`:
 ```env
 GEMINI_API_KEY=your_gemini_api_key_here
-JWT_SECRET_KEY=replace_with_a_secure_random_key
+JWT_SECRET_KEY=generate_a_random_32_byte_hex_string
 JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=60
 DATABASE_URL=sqlite:///./test.db
 ```
 
-### 3. Frontend Setup
+### 3. Frontend Installation
+
 ```bash
 cd ../frontend
 npm install
 ```
 
----
+### 4. Running Locally
 
-## Running the Application
-
-### Start Backend Server
-From the `backend/` directory with the virtual environment activated:
-```bash
-uvicorn app.main:app --reload
+**Start Backend:**
+```powershell
+cd backend
+uvicorn app.main:app --reload --port 8000
 ```
-The API is available at `http://localhost:8000` with interactive docs at `http://localhost:8000/docs`.
+API Documentation: `http://localhost:8000/docs`
 
-### Start Frontend Server
-From the `frontend/` directory:
+**Start Frontend:**
 ```bash
+cd frontend
 npm run dev
 ```
-The interface is available at `http://localhost:5173`.
+Client Interface: `http://localhost:5173`
 
----
+### 5. Running Verification Tests
 
-## Running Tests
-
-From the `backend/` directory:
-
-```bash
-# Run full test suite
+```powershell
+cd backend
 python -m pytest -q
-
-# Run specific test suites
-python -m pytest tests/test_llm_router.py -q
-python -m pytest tests/test_summary_router.py -q
-python -m pytest tests/test_risk_router.py -q
-python -m pytest tests/test_checklist_router.py -q
-python -m pytest tests/test_chat_router.py -q
-python -m pytest tests/test_phase6b.py -q
-```
-
----
-
-## Project Structure
-
-```text
-clauseiq/
-├── backend/
-│   ├── app/
-│   │   ├── api/routes/         # FastAPI endpoints (auth, chat, comparison, documents, etc.)
-│   │   ├── core/               # Configuration, security, JWT, and exceptions
-│   │   ├── db/                 # Database engine and session lifecycle
-│   │   ├── models/             # SQLAlchemy ORM models
-│   │   ├── repositories/       # Data access layer isolating database queries
-│   │   ├── schemas/            # Pydantic request/response models
-│   │   ├── services/           # Business logic
-│   │   │   ├── llm_router.py   # LLM task router
-│   │   │   ├── llm_providers/  # Provider adapter implementations
-│   │   │   ├── ai_service.py   # Gemini API client gateway
-│   │   │   ├── chat_service.py # RAG chat implementation
-│   │   │   └── ...             # Summary, risk, checklist, comparison services
-│   │   ├── storage/            # File storage abstraction layer
-│   │   └── vector_store/       # FAISS vector store abstraction
-│   ├── tests/                  # Integration, unit, security, and router test suites
-│   ├── requirements.txt        # Backend dependencies
-│   └── test.db                 # Local SQLite database
-└── frontend/
-    ├── src/
-    │   ├── components/         # React views, layout shells, and UI components
-    │   ├── App.jsx             # Root application component
-    │   └── main.jsx            # Entry point
-    ├── package.json
-    └── vite.config.js
 ```
 
 ---

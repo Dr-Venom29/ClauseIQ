@@ -83,13 +83,14 @@ def test_clause_extraction_document_not_found():
     async def _run():
         db = MagicMock()
         mock_router = MagicMock(spec=LLMRouter)
+        mock_router.generate_json = AsyncMock()
         service = ClauseExtractionService(db, router=mock_router)
         service.document_repo.get_by_id = MagicMock(return_value=None)
 
         with pytest.raises(ValueError, match="Document not found"):
             await service.extract_clauses(document_id="missing_doc", user_id="u1")
 
-        mock_router.generate_json.assert_not_awaited()
+        mock_router.generate_json.assert_not_called()
 
     asyncio.run(_run())
 
