@@ -5,15 +5,15 @@ from app.repositories.document_repository import DocumentRepository
 from app.repositories.clause_repository import ClauseRepository
 from app.repositories.chunk_repository import ChunkRepository
 from app.core.exceptions import QuotaExceededException
-from app.services.ai_service import AIService
+from app.services.llm_router import get_llm_router, LLMRouter
 
 class ClauseExtractionService:
-    def __init__(self, db):
+    def __init__(self, db, router: LLMRouter | None = None):
         self.db = db
         self.document_repo = DocumentRepository(db)
         self.clause_repo = ClauseRepository(db)
         self.chunk_repo = ChunkRepository(db)
-        self.ai_service = AIService()
+        self.router = router if router is not None else get_llm_router()
 
     async def extract_clauses(self, document_id: str, user_id: str):
         document = self.document_repo.get_by_id(document_id, user_id=user_id)
@@ -42,7 +42,7 @@ class ClauseExtractionService:
         
         clauses_data = []
         try:
-            clauses_data = await self.ai_service.generate_json(prompt, user_id=user_id)
+            clauses_data = await self.router.generate_json(prompt, task="clause_extraction", user_id=user_id)
         except QuotaExceededException:
             print("Clause Extraction: Quota exceeded, falling back to Regex heuristic.")
             # HYBRID FALLBACK: Regex grouping
