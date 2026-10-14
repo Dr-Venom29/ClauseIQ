@@ -5,11 +5,11 @@ from app.repositories.clause_repository import ClauseRepository
 from app.services.change_analysis_service import ChangeAnalysisService
 
 class ComparisonService:
-    def __init__(self, db):
+    def __init__(self, db, change_service: ChangeAnalysisService | None = None):
         self.db = db
         self.document_repo = DocumentRepository(db)
         self.clause_repo = ClauseRepository(db)
-        self.change_service = ChangeAnalysisService()
+        self.change_service = change_service if change_service is not None else ChangeAnalysisService()
 
     async def compare_documents(self, doc_a_id: str, doc_b_id: str, user_id: str) -> dict:
         doc_a = self.document_repo.get_by_id(doc_a_id, user_id=user_id)

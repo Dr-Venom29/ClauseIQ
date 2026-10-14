@@ -1,11 +1,11 @@
 import json
 from app.core.config import settings
 from app.core.exceptions import QuotaExceededException
-from app.services.ai_service import AIService
+from app.services.llm_router import get_llm_router, LLMRouter
 
 class ChangeAnalysisService:
-    def __init__(self):
-        self.ai_service = AIService()
+    def __init__(self, router: LLMRouter | None = None):
+        self.router = router if router is not None else get_llm_router()
 
     async def analyze_change(self, old_text: str, new_text: str, user_id: str = None) -> dict:
         prompt = f"""
@@ -29,7 +29,7 @@ class ChangeAnalysisService:
         """
 
         try:
-            result = await self.ai_service.generate_json(prompt, user_id=user_id)
+            result = await self.router.generate_json(prompt, task="version_impact", user_id=user_id)
             return result
         except QuotaExceededException:
             return {
