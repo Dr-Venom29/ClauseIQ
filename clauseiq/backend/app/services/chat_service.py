@@ -1,12 +1,12 @@
 from app.services.search_service import SearchService
 from app.core.exceptions import QuotaExceededException
-from app.services.ai_service import AIService
+from app.services.llm_router import get_llm_router, LLMRouter
 
 class ChatService:
-    def __init__(self, db):
+    def __init__(self, db, router: LLMRouter | None = None):
         self.db = db
         self.search_service = SearchService()
-        self.ai_service = AIService()
+        self.router = router if router is not None else get_llm_router()
 
     async def chat(self, query: str, user_id: str, document_id: str = None, conversation_id: str = None) -> dict:
         # 1. Retrieve relevant chunks
@@ -35,7 +35,7 @@ class ChatService:
         """
 
         try:
-            answer = await self.ai_service.generate_text(prompt, user_id=user_id)
+            answer = await self.router.generate_text(prompt, task="rag_chat", user_id=user_id)
         except QuotaExceededException as e:
             answer = e.message
 
